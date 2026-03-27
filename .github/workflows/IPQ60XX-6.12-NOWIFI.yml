@@ -3,7 +3,7 @@ name: IPQ60XX-6.12-NOWIFI
 on:
   workflow_dispatch:
   schedule:
-    - cron: 0 19 * * *
+    - cron: 00 12 1 * *
 
 env:
   REPO_URL: https://github.com/LiBwrt/openwrt-6.x.git
@@ -168,7 +168,7 @@ jobs:
           - 💻 这是 ${{ env.FIRMWARE_TAG }} 平台使用的 OpenWrt 固件
           - ⚽ 固件源码: ${{ env.REPO_URL }}
           - 💝 源码分支: ${{ env.REPO_BRANCH }}
-          - 🌐 默认地址: 192.168.1.1
+          - 🌐 默认地址: 192.168.2.1
           - 🔑 默认密码: password
           ### 🧊 固件版本
           - 固件内核版本：${{ env.VERSION_KERNEL }}
