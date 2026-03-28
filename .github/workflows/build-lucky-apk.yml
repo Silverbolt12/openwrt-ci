@@ -22,40 +22,38 @@ jobs:
 
       - name: Setup OpenWrt SDK & Dynamic Link
         run: |
-          # 1. 尝试多种正则模式匹配 SDK 文件名
-          INDEX_HTML=$(curl -sL ${{ env.BASE_URL }})
-          SDK_NAME=$(echo "$INDEX_HTML" | grep -oE 'openwrt-sdk-qualcommax-ipq60xx_gcc-[^"> ]+\.tar\.xz' | head -n 1)
+          # 1. 获取索引页数据
+          echo "正在获取官方 SDK 列表..."
+          INDEX_DATA=$(curl -sL ${{ env.BASE_URL }})
           
-          if [ -z "$SDK_NAME" ]; then
-            echo "错误：无法在索引页匹配到 SDK 文件名！"
-            echo "尝试备用抓取方式..."
-            SDK_NAME=$(echo "$INDEX_HTML" | grep -o 'openwrt-sdk-qualcommax-ipq60xx[^"]*.tar.xz' | head -n 1)
-          fi
+          # 2. 使用 sed 提取文件名 (匹配 <a> 标签之间的内容)
+          # 逻辑：找包含 openwrt-sdk-qualcommax-ipq60xx 且以 .tar.xz 结尾的行
+          SDK_NAME=$(echo "$INDEX_DATA" | sed -n 's/.*>\(openwrt-sdk-qualcommax-ipq60xx[^<]*\.tar\.xz\)<.*/\1/p' | head -n 1)
 
           if [ -z "$SDK_NAME" ]; then
-            echo "彻底失败，输出网页源码前20行调试："
-            echo "$INDEX_HTML" | head -n 20
+            echo "错误：无法在页面中定位 SDK 文件名！"
             exit 1
           fi
 
           SDK_URL="${{ env.BASE_URL }}${SDK_NAME}"
-          echo "成功定位 SDK: $SDK_URL"
+          echo "成功找到最新 SDK: $SDK_URL"
           
-          # 2. 下载并解压
+          # 3. 下载并解压
           wget -q "$SDK_URL" -O sdk.tar.xz
           mkdir sdk && tar -xJf sdk.tar.xz -C sdk --strip-components=1
 
-      - name: Install Feeds & Golang Support
+      - name: Install Feeds & Dependencies
         run: |
           cd sdk
-          # 添加 Lucky 源码
+          # 添加 Lucky 源码仓库
           echo "src-git lucky https://github.com/gdy666/luci-app-lucky.git" >> feeds.conf.default
           
           ./scripts/feeds update -a
           ./scripts/feeds install -a
           
-          # 核心修正：Lucky 是 Go 写的，必须显式安装 golang 工具链
+          # 核心依赖：Lucky(Go语言) 和 LuCI兼容层
           ./scripts/feeds install golang
+          ./scripts/feeds install luci-compat
 
       - name: Configure & Compile Lucky APK
         run: |
@@ -63,25 +61,27 @@ jobs:
           # 1. 开启 APK 模式
           echo "CONFIG_USE_APK=y" > .config
           
-          # 2. 选中 Lucky 及其插件
+          # 2. 选中 Lucky 及其插件和语言包
           echo "CONFIG_PACKAGE_lucky=y" >> .config
           echo "CONFIG_PACKAGE_luci-app-lucky=y" >> .config
           echo "CONFIG_PACKAGE_luci-i18n-lucky-zh-cn=y" >> .config
+          echo "CONFIG_PACKAGE_luci-compat=y" >> .config
           
-          # 3. 刷新配置并编译
+          # 3. 刷新依赖关系
           make defconfig
-          # 使用 V=s 查看详细日志，-j1 提高成功率（SDK 环境下 -j1 依然很快）
+          
+          # 4. 开始编译 (先尝试多线程，失败则转单线程详细输出)
           make package/lucky/compile V=s -j$(nproc) || make package/lucky/compile V=s -j1
 
-      - name: Organize & Upload Artifacts
+      - name: Organize Artifacts
         if: success()
         run: |
           mkdir -p publish_apk
-          # 搜寻所有生成的 lucky 相关 apk 文件
+          # 自动搜寻编译出的 .apk 文件
           find sdk/bin/ -name "*lucky*.apk" -exec cp {} publish_apk/ \;
           
-      - name: Upload APK
+      - name: Upload Lucky APK
         uses: actions/upload-artifact@v4
         with:
-          name: Lucky-APK-IPQ6000
+          name: Lucky-APK-IPQ6000-Snapshot
           path: publish_apk/*
