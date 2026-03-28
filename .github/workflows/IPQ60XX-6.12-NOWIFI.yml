@@ -1,4 +1,4 @@
-name: IPQ60XX-6.12-NOWIFI-ZN_M2
+name: IPQ60XX-6.12-NOWIFI
 
 on:
   workflow_dispatch:
@@ -8,7 +8,7 @@ on:
 env:
   REPO_URL: https://github.com/LiBwrt/openwrt-6.x.git
   REPO_BRANCH: main-nss
-  CONFIG_FILE: configs/ipq60xx-6.12apk.config
+  CONFIG_FILE: configs/ipq60xx-6.12-nowifi.config
   DIY_SCRIPT: libwrt.sh
   CACHE_TOOLCHAIN: true
   UPLOAD_BIN_DIR: false
@@ -60,18 +60,40 @@ jobs:
         ccache: false
         mixkey: ipq60xx-zn_m2-6.12
         prefix: ${{ env.OPENWRT_PATH }}
-        
-    - name: Add Third Party Feeds
-      run: |
-        echo "src-git lucky https://github.com/gdy666/luci-app-lucky.git" >> feeds.conf.default
-          ./scripts/feeds update -a
-          ./scripts/feeds install -a
     
     - name: Install Feeds(安装feeds)
       run: |
         cd $OPENWRT_PATH
         ./scripts/feeds update -a
         ./scripts/feeds install -a
+
+    - name: Force Clone Lucky Source
+      run: |
+        cd $OPENWRT_PATH
+        # 直接克隆源码到 package 目录，跳过 feeds 机制的检测
+        git clone --depth 1 https://github.com/gdy666/luci-app-lucky.git package/lucky
+        # 强制安装依赖（Lucky 运行需要这些）
+        ./scripts/feeds update -a
+        ./scripts/feeds install -a
+
+    - name: Load Custom Configuration(加载自定义配置)
+      run: |
+        cd $OPENWRT_PATH
+        # 这里的路径保持你原来的逻辑
+        chmod +x $GITHUB_WORKSPACE/$DIY_SCRIPT
+        $GITHUB_WORKSPACE/$DIY_SCRIPT
+        
+        # 1. 覆盖你的原始配置
+        cp $GITHUB_WORKSPACE/$CONFIG_FILE .config
+        
+        # 2. 补丁：确保 Lucky 在 APK 模式下能被识别
+        # 某些 6.12 APK 分支如果找不到包，手动追加到 config 末尾
+        echo "CONFIG_PACKAGE_lucky=y" >> .config
+        echo "CONFIG_PACKAGE_luci-app-lucky=y" >> .config
+        echo "CONFIG_PACKAGE_luci-i18n-lucky-zh-cn=y" >> .config
+        
+        # 3. 执行补全
+        make defconfig
 
     - name: Load Custom Configuration(加载自定义配置)
       run: |
