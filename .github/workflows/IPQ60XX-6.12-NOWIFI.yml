@@ -89,6 +89,14 @@ jobs:
         ccache: false
         mixkey: ${{ env.SOURCE_REPO }}-${{ env.REPO_BRANCH }}-${{ env.DEVICE_TARGET }}-${{ env.DEVICE_SUBTARGET }}
         prefix: ${{ env.OPENWRT_PATH }}
+
+    - name: Add Lucky Source
+  run: |
+    # 将 Lucky 源码仓库添加到 feeds.conf.default
+    echo "src-git lucky https://github.com/gdy666/luci-app-lucky.git" >> feeds.conf.default
+    
+    # (可选) 如果你发现编译出的界面是英文，可以强制指定 i18n
+    # echo "CONFIG_PACKAGE_luci-i18n-lucky-zh-cn=y" >> .config
     
     - name: Install Feeds(安装feeds)
       run: |
