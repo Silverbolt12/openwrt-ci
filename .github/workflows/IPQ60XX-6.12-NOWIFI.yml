@@ -60,7 +60,13 @@ jobs:
         ccache: false
         mixkey: ipq60xx-zn_m2-6.12
         prefix: ${{ env.OPENWRT_PATH }}
-
+        
+    - name: Add Third Party Feeds
+      run: |
+        echo "src-git lucky https://github.com/gdy666/luci-app-lucky.git" >> feeds.conf.default
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+    
     - name: Install Feeds(安装feeds)
       run: |
         cd $OPENWRT_PATH
