@@ -1,26 +1,75 @@
-- name: Install Feeds & Golang Support
+name: Build Lucky APK for IPQ6000
+
+on:
+  workflow_dispatch: # 手动点击运行
+
+env:
+  BASE_URL: https://downloads.openwrt.org/snapshots/targets/qualcommax/ipq60xx/
+  TZ: Asia/Shanghai
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Initialization Environment
+        run: |
+          sudo apt update
+          # 安装必要的编译工具及 zstd (用于解压最新 SDK)
+          sudo apt install -y build-essential libncurses5-dev gawk git gettext libssl-dev xsltproc wget unzip qemu-utils curl zstd
+          sudo timedatectl set-timezone "$TZ"
+
+      - name: Setup OpenWrt SDK
+        run: |
+          echo "正在获取适配 IPQ6000 的最新 SDK..."
+          INDEX_DATA=$(curl -sL ${{ env.BASE_URL }})
+          
+          # 动态匹配最新的 .tar.zst 或 .tar.xz 文件
+          SDK_NAME=$(echo "$INDEX_DATA" | grep -oE 'openwrt-sdk-qualcommax-ipq60xx[^"> ]*tar\.(zst|xz)' | head -n 1)
+
+          if [ -z "$SDK_NAME" ]; then
+            echo "错误：无法在服务器上定位 SDK 文件！"
+            exit 1
+          fi
+
+          SDK_URL="${{ env.BASE_URL }}${SDK_NAME}"
+          echo "最终下载地址: $SDK_URL"
+          
+          # 下载并解压 (针对 zst 格式进行特殊处理)
+          wget -q "$SDK_URL" -O sdk.archive
+          mkdir sdk
+          if [[ "$SDK_NAME" == *.zst ]]; then
+            zstd -d sdk.archive -o sdk.tar
+            tar -xf sdk.tar -C sdk --strip-components=1
+            rm sdk.tar
+          else
+            tar -xJf sdk.archive -C sdk --strip-components=1
+          fi
+          rm sdk.archive
+
+      - name: Install Feeds & Dependencies
         run: |
           cd sdk
-          # 1. 添加 Lucky 源码
+          # 添加 Lucky 源码仓库
           echo "src-git lucky https://github.com/gdy666/luci-app-lucky.git" >> feeds.conf.default
           
-          # 2. 更新并安装所有 Feeds (增加 luci 核心 feed 以便支持界面编译)
           ./scripts/feeds update -a
           ./scripts/feeds install -a
           
-          # 3. 显式安装必须的组件
+          # 显式安装 Lucky 编译必须的工具链
           ./scripts/feeds install golang
           ./scripts/feeds install luci-base
           ./scripts/feeds install luci-compat
 
-      - name: Configure & Compile Lucky APK
+      - name: Configure & Compile
         run: |
           cd sdk
-          # 开启 APK 模式
+          # 1. 强制开启 APK 模式
           echo "CONFIG_USE_APK=y" > .config
           
-          # 强制选中所有相关包 (使用 =y 强制选中)
-          # 注意：有些版本的 Makefile 包名可能带有前缀，我们多写几个兼容项
+          # 2. 强制选中 Lucky 所有组件 (核心+界面+中文包)
           cat >> .config <<EOF
           CONFIG_PACKAGE_lucky=y
           CONFIG_PACKAGE_luci-app-lucky=y
@@ -29,19 +78,29 @@
           CONFIG_PACKAGE_golang=y
           EOF
           
-          # 扩展：如果还是没出 luci-app，尝试通过脚本直接选中
-          sed -i 's/p/y/g' .config 2>/dev/null || true
-          
+          # 3. 刷新配置
           make defconfig
           
-          # 关键点：不再只编译 package/lucky，而是编译整个 lucky 目录下的所有包
-          # 如果 lucky 源码里有多个文件夹（如 lucky 和 luci-app-lucky），这样能全部覆盖
-          make package/feeds/lucky/luci-app-lucky/compile V=s -j$(nproc)
-          make package/feeds/lucky/lucky/compile V=s -j$(nproc)
+          # 4. 编译整个 Lucky Feed 目录 (确保界面和核心一起产出)
+          # 使用 -j$(nproc) 加速，如果失败自动切回单线程查看错误
+          make package/feeds/lucky/lucky/compile V=s -j$(nproc) || make package/feeds/lucky/lucky/compile V=s -j1
+          make package/feeds/lucky/luci-app-lucky/compile V=s -j$(nproc) || make package/feeds/lucky/luci-app-lucky/compile V=s -j1
 
       - name: Organize & Upload Artifacts
         if: success()
         run: |
           mkdir -p publish_apk
-          # 扩大搜索范围，寻找所有 .apk
-          find sdk/bin/ -name "*.apk" -exec cp {} publish_apk/ \;
+          # 递归搜索所有生成的 .apk 文件
+          find sdk/bin/packages/ -name "*lucky*.apk" -exec cp {} publish_apk/ \;
+          
+          # 检查是否真的搜到了文件
+          if [ -z "$(ls -A publish_apk)" ]; then
+            echo "警告：未找到任何 lucky 相关的 .apk 文件！"
+            exit 1
+          fi
+          
+      - name: Upload Lucky APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Lucky-APK-IPQ6000-ARM64
+          path: publish_apk/*
