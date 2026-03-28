@@ -1,123 +1,124 @@
-# --- 设备平台与 APK 核心配置 ---
-CONFIG_TARGET_qualcommax=y
-CONFIG_TARGET_qualcommax_ipq60xx=y
-CONFIG_TARGET_DEVICE_qualcommax_ipq60xx_DEVICE_zn_m2=y
-CONFIG_TARGET_MULTI_PROFILE=y
-CONFIG_USE_APK=y
-# CONFIG_PACKAGE_opkg is not set
-CONFIG_PACKAGE_usign=y
-CONFIG_PACKAGE_openwrt-keyring=y
-CONFIG_PACKAGE_ca-bundle=y
+name: IPQ60XX-6.12-NOWIFI-ZN_M2
 
-# --- 核心插件 1：Passwall (科学上网) ---
-CONFIG_PACKAGE_luci-app-passwall=y
-CONFIG_PACKAGE_luci-i18n-passwall-zh-cn=y
-CONFIG_PACKAGE_kmod-nft-tproxy=y
-CONFIG_PACKAGE_kmod-nf-tproxy=y
-CONFIG_PACKAGE_kmod-ipt-tproxy=y
-CONFIG_PACKAGE_libmbedtls=y
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: 00 12 1 * *
 
-# --- 核心插件 2：SmartDNS 及其加速 ---
-CONFIG_PACKAGE_smartdns=y
-CONFIG_PACKAGE_luci-app-smartdns=y
-CONFIG_PACKAGE_luci-i18n-smartdns-zh-cn=y
-CONFIG_PACKAGE_kmod-tcp-fastopen=y
-CONFIG_PACKAGE_libaio=y
+env:
+  REPO_URL: https://github.com/LiBwrt/openwrt-6.x.git
+  REPO_BRANCH: main-nss
+  CONFIG_FILE: configs/ipq60xx-6.12apk.config
+  DIY_SCRIPT: libwrt.sh
+  CACHE_TOOLCHAIN: true
+  UPLOAD_BIN_DIR: false
+  FIRMWARE_RELEASE: true
+  FIRMWARE_TAG: ZN_M2-6.12-Pure
+  TZ: Asia/Shanghai
 
-# --- 核心插件 3：Lucky / ZeroTier / TTYD / udpxy ---
-CONFIG_PACKAGE_lucky=y
-CONFIG_PACKAGE_luci-app-lucky=y
-CONFIG_PACKAGE_luci-i18n-lucky-zh-cn=y
-CONFIG_PACKAGE_luci-app-zerotier=y
-CONFIG_PACKAGE_luci-i18n-zerotier-zh-cn=y
-CONFIG_PACKAGE_luci-app-ttyd=y
-CONFIG_PACKAGE_luci-i18n-ttyd-zh-cn=y
-CONFIG_PACKAGE_luci-app-udpxy=y
-CONFIG_PACKAGE_luci-i18n-udpxy-zh-cn=y
+jobs:
+  Build:
+    runs-on: ubuntu-latest
 
-# --- 补全 Lucky 可能需要的网络依赖 ---
-CONFIG_PACKAGE_iptables-mod-tproxy=y
-CONFIG_PACKAGE_iptables-mod-extra=y
-CONFIG_PACKAGE_ip6tables-mod-full=y
+    steps:
+    - name: Check Server Performance(检查服务器性能)
+      run: |
+        echo "--------------------------CPU信息--------------------------"
+        echo "核心数量：$(nproc)"
+        echo "--------------------------磁盘信息--------------------------"
+        df -hT
 
-# --- 其他保留/新增的功能 ---
-CONFIG_PACKAGE_luci-app-autoreboot=y
-CONFIG_PACKAGE_luci-app-upnp=y
-CONFIG_PACKAGE_luci-app-wolplus=y
-CONFIG_PACKAGE_luci-app-argon-config=y
-CONFIG_PACKAGE_luci-theme-argon=y
+    - name: Initialization Environment(初始化环境)
+      env:
+        DEBIAN_FRONTEND: noninteractive
+      run: |
+        sudo bash -c 'bash <(curl -sL https://build-scripts.immortalwrt.org/init_build_environment.sh)'
+        sudo -E apt -yqq install dos2unix libfuse-dev
+        sudo timedatectl set-timezone "$TZ"
 
-# --- 彻底剔除：USB 网络驱动与相关组件 ---
-# CONFIG_PACKAGE_kmod-usb-net is not set
-# CONFIG_PACKAGE_kmod-usb-net-rtl8152 is not set
-# CONFIG_PACKAGE_kmod-usb-net-asix-ax88179 is not set
-# CONFIG_PACKAGE_kmod-usb-net-qmi-wwan is not set
-# CONFIG_PACKAGE_kmod-usb-net-cdc-ether is not set
-# CONFIG_PACKAGE_usb-modeswitch is not set
-# CONFIG_PACKAGE_usbmuxd is not set
+    - name: Maximize Build Space(释放磁盘空间)
+      uses: easimon/maximize-build-space@master
+      with:
+        swap-size-mb: 1024
+        temp-reserve-mb: 100
+        root-reserve-mb: 1024
 
-# --- 彻底剔除：Docker 及其依赖 ---
-# CONFIG_PACKAGE_docker is not set
-# CONFIG_PACKAGE_dockerd is not set
-# CONFIG_PACKAGE_docker-compose is not set
-# CONFIG_PACKAGE_luci-app-dockerman is not set
-# CONFIG_PACKAGE_containerd is not set
-# CONFIG_PACKAGE_runc is not set
+    - name: Checkout
+      uses: actions/checkout@main
 
-# --- 核心组件 (已精简 USB 与磁盘工具) ---
-CONFIG_PACKAGE_autocore=y
-CONFIG_PACKAGE_coremark=y
-CONFIG_PACKAGE_cpufreq=y
-CONFIG_PACKAGE_curl=y
-CONFIG_PACKAGE_htop=y
-CONFIG_PACKAGE_iperf3=y
-CONFIG_PACKAGE_ip-full=y
+    - name: Clone Source Code(克隆源代码)
+      run: |
+        git clone --depth 1 -b $REPO_BRANCH $REPO_URL openwrt
+        cd openwrt
+        echo "OPENWRT_PATH=$PWD" >> $GITHUB_ENV
+        echo "VERSION_INFO=$(git show -s --date=short --format='作者: %an<br/>时间: %cd<br/>hash: %H')" >> $GITHUB_ENV
 
-# --- LuCI 基础框架 ---
-CONFIG_PACKAGE_luci-base=y
-CONFIG_PACKAGE_luci-compat=y
-CONFIG_PACKAGE_luci-lib-base=y
-CONFIG_PACKAGE_luci-lib-ipkg=y
-CONFIG_PACKAGE_luci-lua-runtime=y
-CONFIG_PACKAGE_luci-proto-relay=y
+    - name: Cache Toolchain(缓存工具链)
+      if: env.CACHE_TOOLCHAIN == 'true'
+      uses: HiGarfield/cachewrtbuild@main
+      with:
+        ccache: false
+        mixkey: ipq60xx-zn_m2-6.12
+        prefix: ${{ env.OPENWRT_PATH }}
 
-# --- 系统工具 (保留 SSH 与 固件工具) ---
-CONFIG_PACKAGE_openssh-keygen=y
-CONFIG_PACKAGE_openssh-sftp-server=y
-CONFIG_PACKAGE_openssl-util=y
-CONFIG_PACKAGE_nand-utils=y
-CONFIG_PACKAGE_mmc-utils=y
-CONFIG_PACKAGE_xz-utils=y
-CONFIG_PACKAGE_dmesg=y
+    - name: Install Feeds(安装feeds)
+      run: |
+        cd $OPENWRT_PATH
+        ./scripts/feeds update -a
+        ./scripts/feeds install -a
 
-# --- 彻底剔除不需要的磁盘/USB工具 ---
-# CONFIG_PACKAGE_automount is not set
-# CONFIG_PACKAGE_blkid is not set
-# CONFIG_PACKAGE_fdisk is not set
-# CONFIG_PACKAGE_lsblk is not set
-# CONFIG_PACKAGE_usbutils is not set
-# CONFIG_PACKAGE_usbmuxd is not set
+    - name: Load Custom Configuration(加载自定义配置)
+      run: |
+        [ -e files ] && mv files $OPENWRT_PATH/files
+        cp $CONFIG_FILE $OPENWRT_PATH/.config
+        chmod +x $DIY_SCRIPT
+        $GITHUB_WORKSPACE/$DIY_SCRIPT
+        cd $OPENWRT_PATH
+        make defconfig
 
-# --- 性能与系统调整 (保留核心部分) ---
-CONFIG_CCACHE=y
-CONFIG_DEVEL=y
-CONFIG_PACKAGE_autocore=y
-CONFIG_PACKAGE_coremark=y
-CONFIG_PACKAGE_htop=y
-CONFIG_PACKAGE_curl=y
-CONFIG_PACKAGE_kmod-wireguard=y
-CONFIG_PACKAGE_kmod-tun=y
+    - name: Download DL Package(下载DL软件包)
+      run: |
+        cd $OPENWRT_PATH
+        make download -j8
+        find dl -size -1024c -delete
 
-# --- 无线驱动 (按原配置设为 n) ---
-CONFIG_PACKAGE_kmod-ath11k=n
-CONFIG_PACKAGE_kmod-ath11k-ahb=n
-CONFIG_PACKAGE_kmod-ath11k-pci=n
-CONFIG_PACKAGE_ath11k-firmware-ipq6018=n
-CONFIG_PACKAGE_ath11k-firmware-ipq6018-ddwrt=n
-CONFIG_PACKAGE_ath11k-firmware-qcn9074=n
-CONFIG_PACKAGE_ath11k-firmware-qcn9074-ddwrt=n
-CONFIG_PACKAGE_wpad-openssl=n
-CONFIG_PACKAGE_hostapd-common=n
+    - name: Compile Firmware(开始编译固件)
+      id: compile
+      run: |
+        cd $OPENWRT_PATH
+        echo -e "$(nproc) thread compile"
+        make -j$(nproc) || make -j1 V=s
+        echo "status=success" >> $GITHUB_OUTPUT
+        echo "DATE=$(date +'%Y-%m-%d %H:%M:%S')" >> $GITHUB_ENV
 
-# --- 界面与语言 ---
-CONFIG_LUCI_LANG_zh_Hans=y
+    - name: Organize Files(整理文件)
+      if: steps.compile.outputs.status == 'success'
+      run: |
+        cd $OPENWRT_PATH/bin/targets/*/*
+        echo "VERSION_KERNEL=$(find -type f -name "*.manifest" -exec grep -oP '^kernel - \K.*?(?=~|-\d+-)' {} \;)" >> $GITHUB_ENV
+        # 打包所有APK插件包
+        mkdir -p packages_backup
+        find $OPENWRT_PATH/bin/packages/ -name "*.apk" -exec cp {} packages_backup/ \; 2>/dev/null || true
+        tar -zcf Packages_All_Plugins.tar.gz packages_backup
+        # 整理输出目录
+        cp $OPENWRT_PATH/.config build.config
+        rm -rf packages_backup packages feeds.buildinfo version.buildinfo config.buildinfo *.manifest
+        echo "FIRMWARE_PATH=$PWD" >> $GITHUB_ENV
+
+    - name: Upload Firmware To Release(发布固件)
+      if: steps.compile.outputs.status == 'success' && env.FIRMWARE_RELEASE == 'true'
+      uses: ncipollo/release-action@v1
+      with:
+        name: R${{ env.DATE }} for ZN_M2
+        tag: ${{ env.FIRMWARE_TAG }}
+        token: ${{ secrets.GITHUB_TOKEN }}
+        artifacts: ${{ env.FIRMWARE_PATH }}/*
+        body: |
+          **OpenWrt Firmware for ZN_M2 (兆能 M2)**
+          - 核心：基于 Linux 6.12 内核 & NSS 加速
+          - 插件：Passwall, SmartDNS, Lucky, ZeroTier, udpxy
+          - 特性：极致精简 (无 WIFI / 无 Docker / 无 USB 驱动)
+          - 默认地址: `192.168.2.1` | 密码: `password`
+          ---
+          ${{ env.VERSION_INFO }}
+          内核版本: ${{ env.VERSION_KERNEL }}
