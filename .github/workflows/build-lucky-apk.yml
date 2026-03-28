@@ -1,10 +1,9 @@
 name: Build Lucky APK for IPQ6000
 
 on:
-  workflow_dispatch: # 手动触发编译
+  workflow_dispatch: # 手动触发
 
 env:
-  # IPQ6000 对应的官方快照路径
   BASE_URL: https://downloads.openwrt.org/snapshots/targets/qualcommax/ipq60xx/
   TZ: Asia/Shanghai
 
@@ -18,60 +17,71 @@ jobs:
       - name: Initialization Environment
         run: |
           sudo apt update
-          sudo apt install -y build-essential libncurses5-dev gawk git gettext libssl-dev xsltproc wget unzip qemu-utils
+          sudo apt install -y build-essential libncurses5-dev gawk git gettext libssl-dev xsltproc wget unzip qemu-utils curl
           sudo timedatectl set-timezone "$TZ"
 
       - name: Setup OpenWrt SDK & Dynamic Link
         run: |
-          # 动态抓取最新的 SDK 文件名，避免 404 错误
-          SDK_NAME=$(curl -sL ${{ env.BASE_URL }} | grep -oP 'openwrt-sdk-qualcommax-ipq60xx_gcc-[^"]*x86_64.tar.xz' | head -n 1)
+          # 1. 尝试多种正则模式匹配 SDK 文件名
+          INDEX_HTML=$(curl -sL ${{ env.BASE_URL }})
+          SDK_NAME=$(echo "$INDEX_HTML" | grep -oE 'openwrt-sdk-qualcommax-ipq60xx_gcc-[^"> ]+\.tar\.xz' | head -n 1)
+          
           if [ -z "$SDK_NAME" ]; then
-            echo "错误：无法在服务器上找到最新的 SDK 文件！"
+            echo "错误：无法在索引页匹配到 SDK 文件名！"
+            echo "尝试备用抓取方式..."
+            SDK_NAME=$(echo "$INDEX_HTML" | grep -o 'openwrt-sdk-qualcommax-ipq60xx[^"]*.tar.xz' | head -n 1)
+          fi
+
+          if [ -z "$SDK_NAME" ]; then
+            echo "彻底失败，输出网页源码前20行调试："
+            echo "$INDEX_HTML" | head -n 20
             exit 1
           fi
-          SDK_URL="${{ env.BASE_URL }}${SDK_NAME}"
-          echo "发现最新 SDK: $SDK_URL"
-          
-          wget -q $SDK_URL -O sdk.tar.xz
-          mkdir sdk && tar -xJf sdk.tar.xz -C sdk --strip-components=1
-          cd sdk
-          
-          # 添加 Lucky 源码 feed
-          echo "src-git lucky https://github.com/gdy666/luci-app-lucky.git" >> feeds.conf.default
-          
-          # 更新并安装所有 feeds
-          ./scripts/feeds update -a
-          ./scripts/feeds install -a
 
-      - name: Configure & Compile Lucky
+          SDK_URL="${{ env.BASE_URL }}${SDK_NAME}"
+          echo "成功定位 SDK: $SDK_URL"
+          
+          # 2. 下载并解压
+          wget -q "$SDK_URL" -O sdk.tar.xz
+          mkdir sdk && tar -xJf sdk.tar.xz -C sdk --strip-components=1
+
+      - name: Install Feeds & Golang Support
         run: |
           cd sdk
+          # 添加 Lucky 源码
+          echo "src-git lucky https://github.com/gdy666/luci-app-lucky.git" >> feeds.conf.default
           
-          # 1. 强制开启 APK 编译模式
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+          
+          # 核心修正：Lucky 是 Go 写的，必须显式安装 golang 工具链
+          ./scripts/feeds install golang
+
+      - name: Configure & Compile Lucky APK
+        run: |
+          cd sdk
+          # 1. 开启 APK 模式
           echo "CONFIG_USE_APK=y" > .config
           
-          # 2. 选中 Lucky 及其依赖
+          # 2. 选中 Lucky 及其插件
           echo "CONFIG_PACKAGE_lucky=y" >> .config
           echo "CONFIG_PACKAGE_luci-app-lucky=y" >> .config
           echo "CONFIG_PACKAGE_luci-i18n-lucky-zh-cn=y" >> .config
           
-          # 3. 补齐依赖并刷新配置
+          # 3. 刷新配置并编译
           make defconfig
-          
-          # 4. 仅编译 Lucky 相关包 (V=s 开启详细日志)
-          # 注意：Lucky 依赖 golang，SDK 会自动处理相关编译链
-          make package/lucky/compile V=s -j$(nproc)
+          # 使用 V=s 查看详细日志，-j1 提高成功率（SDK 环境下 -j1 依然很快）
+          make package/lucky/compile V=s -j$(nproc) || make package/lucky/compile V=s -j1
 
-      - name: Organize Files
+      - name: Organize & Upload Artifacts
         if: success()
         run: |
           mkdir -p publish_apk
-          # 搜寻生成的 .apk 文件并移动到发布目录
+          # 搜寻所有生成的 lucky 相关 apk 文件
           find sdk/bin/ -name "*lucky*.apk" -exec cp {} publish_apk/ \;
-          echo "FIRMWARE_PATH=$PWD/publish_apk" >> $GITHUB_ENV
-
-      - name: Upload Artifacts
+          
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: Lucky-APK-IPQ6000
-          path: ${{ env.FIRMWARE_PATH }}/*
+          path: publish_apk/*
