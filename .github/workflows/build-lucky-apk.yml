@@ -1,10 +1,12 @@
 name: Build Lucky APK for IPQ6000
 
 on:
-  workflow_dispatch: # 手动触发
+  workflow_dispatch: # 手动触发编译
 
 env:
-  SDK_URL: https://downloads.openwrt.org/snapshots/targets/qualcommax/ipq60xx/openwrt-sdk-qualcommax-ipq60xx_gcc-14.2.0_musl.Linux-x86_64.tar.xz
+  # IPQ6000 对应的官方快照路径
+  BASE_URL: https://downloads.openwrt.org/snapshots/targets/qualcommax/ipq60xx/
+  TZ: Asia/Shanghai
 
 jobs:
   build:
@@ -13,36 +15,63 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Dependencies
+      - name: Initialization Environment
         run: |
           sudo apt update
           sudo apt install -y build-essential libncurses5-dev gawk git gettext libssl-dev xsltproc wget unzip qemu-utils
+          sudo timedatectl set-timezone "$TZ"
 
-      - name: Setup OpenWrt SDK
+      - name: Setup OpenWrt SDK & Dynamic Link
         run: |
-          wget $SDK_URL -O sdk.tar.xz
+          # 动态抓取最新的 SDK 文件名，避免 404 错误
+          SDK_NAME=$(curl -sL ${{ env.BASE_URL }} | grep -oP 'openwrt-sdk-qualcommax-ipq60xx_gcc-[^"]*x86_64.tar.xz' | head -n 1)
+          if [ -z "$SDK_NAME" ]; then
+            echo "错误：无法在服务器上找到最新的 SDK 文件！"
+            exit 1
+          fi
+          SDK_URL="${{ env.BASE_URL }}${SDK_NAME}"
+          echo "发现最新 SDK: $SDK_URL"
+          
+          wget -q $SDK_URL -O sdk.tar.xz
           mkdir sdk && tar -xJf sdk.tar.xz -C sdk --strip-components=1
           cd sdk
+          
           # 添加 Lucky 源码 feed
           echo "src-git lucky https://github.com/gdy666/luci-app-lucky.git" >> feeds.conf.default
+          
+          # 更新并安装所有 feeds
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
-      - name: Configure and Build APK
+      - name: Configure & Compile Lucky
         run: |
           cd sdk
-          # 关键点：配置为 APK 模式并选中 Lucky
+          
+          # 1. 强制开启 APK 编译模式
           echo "CONFIG_USE_APK=y" > .config
+          
+          # 2. 选中 Lucky 及其依赖
           echo "CONFIG_PACKAGE_lucky=y" >> .config
           echo "CONFIG_PACKAGE_luci-app-lucky=y" >> .config
           echo "CONFIG_PACKAGE_luci-i18n-lucky-zh-cn=y" >> .config
           
+          # 3. 补齐依赖并刷新配置
           make defconfig
-          # 仅编译 Lucky 相关的包
+          
+          # 4. 仅编译 Lucky 相关包 (V=s 开启详细日志)
+          # 注意：Lucky 依赖 golang，SDK 会自动处理相关编译链
           make package/lucky/compile V=s -j$(nproc)
 
-      - name: Upload APK Artifacts
+      - name: Organize Files
+        if: success()
+        run: |
+          mkdir -p publish_apk
+          # 搜寻生成的 .apk 文件并移动到发布目录
+          find sdk/bin/ -name "*lucky*.apk" -exec cp {} publish_apk/ \;
+          echo "FIRMWARE_PATH=$PWD/publish_apk" >> $GITHUB_ENV
+
+      - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: lucky-apk-ipq6000
-          path: sdk/bin/packages/aarch64_cortex-a53/lucky/*.apk
+          name: Lucky-APK-IPQ6000
+          path: ${{ env.FIRMWARE_PATH }}/*
