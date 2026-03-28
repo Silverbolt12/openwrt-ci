@@ -1,10 +1,9 @@
 name: Build Lucky APK for IPQ6000
 
 on:
-  workflow_dispatch: # 手动点击运行
+  workflow_dispatch: # 手动触发
 
 env:
-  # 目标平台：Qualcommax IPQ60xx (对应 IPQ6000)
   BASE_URL: https://downloads.openwrt.org/snapshots/targets/qualcommax/ipq60xx/
   TZ: Asia/Shanghai
 
@@ -18,70 +17,70 @@ jobs:
       - name: Initialization Environment
         run: |
           sudo apt update
-          sudo apt install -y build-essential libncurses5-dev gawk git gettext libssl-dev xsltproc wget unzip qemu-utils curl
+          # 关键：增加了 zstd 用于解压新的 SDK 格式
+          sudo apt install -y build-essential libncurses5-dev gawk git gettext libssl-dev xsltproc wget unzip qemu-utils curl zstd
           sudo timedatectl set-timezone "$TZ"
 
-      - name: Setup OpenWrt SDK (Cross-Compile for ARM64)
+      - name: Setup OpenWrt SDK (Handle .zst Format)
         run: |
-          echo "正在获取适配 IPQ6000 的 SDK 下载列表..."
-          # 获取网页索引内容
+          echo "正在获取适配 IPQ6000 的最新 .zst 格式 SDK..."
           INDEX_DATA=$(curl -sL ${{ env.BASE_URL }})
           
-          # 自动寻找文件名：包含 SDK、qualcommax 以及用于在 GitHub 运行的 x86_64 工具链标识
-          SDK_NAME=$(echo "$INDEX_DATA" | grep -oE 'openwrt-sdk-qualcommax-ipq60xx[^"> ]*x86_64\.tar\.xz' | head -n 1)
+          # 动态匹配：支持最新的 .tar.zst 后缀
+          SDK_NAME=$(echo "$INDEX_DATA" | grep -oE 'openwrt-sdk-qualcommax-ipq60xx[^"> ]*tar\.zst' | head -n 1)
 
           if [ -z "$SDK_NAME" ]; then
-            echo "自动匹配失败，尝试使用当前已知的快照文件名..."
-            SDK_NAME="openwrt-sdk-qualcommax-ipq60xx_gcc-14.2.0_musl.Linux-x86_64.tar.xz"
+            echo "自动匹配失败，尝试匹配旧版 .xz 格式..."
+            SDK_NAME=$(echo "$INDEX_DATA" | grep -oE 'openwrt-sdk-qualcommax-ipq60xx[^"> ]*tar\.xz' | head -n 1)
+          fi
+
+          if [ -z "$SDK_NAME" ]; then
+            echo "无法在服务器上定位 SDK 文件，请检查 URL。"
+            exit 1
           fi
 
           SDK_URL="${{ env.BASE_URL }}${SDK_NAME}"
           echo "最终下载地址: $SDK_URL"
           
-          # 下载并解压 SDK
-          wget -q "$SDK_URL" -O sdk.tar.xz
-          mkdir sdk && tar -xJf sdk.tar.xz -C sdk --strip-components=1
+          # 下载 SDK
+          wget -q "$SDK_URL" -O sdk.tar.zst
+          
+          # 解压 .zst 格式
+          mkdir sdk
+          zstd -d sdk.tar.zst -o sdk.tar
+          tar -xf sdk.tar -C sdk --strip-components=1
+          rm sdk.tar sdk.tar.zst
 
       - name: Install Feeds & Golang Support
         run: |
           cd sdk
-          # 注入 Lucky 源码
           echo "src-git lucky https://github.com/gdy666/luci-app-lucky.git" >> feeds.conf.default
-          
           ./scripts/feeds update -a
           ./scripts/feeds install -a
-          
-          # 关键：Lucky 是 Go 编写的，必须安装 golang 编译环境和 LuCI 兼容层
           ./scripts/feeds install golang
           ./scripts/feeds install luci-compat
 
       - name: Configure & Compile Lucky APK
         run: |
           cd sdk
-          # 强制指定 APK 模式
           echo "CONFIG_USE_APK=y" > .config
-          
-          # 选中 Lucky 及其插件
           echo "CONFIG_PACKAGE_lucky=y" >> .config
           echo "CONFIG_PACKAGE_luci-app-lucky=y" >> .config
           echo "CONFIG_PACKAGE_luci-i18n-lucky-zh-cn=y" >> .config
           echo "CONFIG_PACKAGE_luci-compat=y" >> .config
           
-          # 刷新依赖
           make defconfig
-          
-          # 开始交叉编译（目标架构为 ARM64/Cortex-A53）
+          # 核心编译
           make package/lucky/compile V=s -j$(nproc) || make package/lucky/compile V=s -j1
 
       - name: Organize & Upload Artifacts
         if: success()
         run: |
           mkdir -p publish_apk
-          # 在 SDK 输出目录中寻找生成的 .apk 文件
           find sdk/bin/ -name "*lucky*.apk" -exec cp {} publish_apk/ \;
           
       - name: Upload Lucky APK
         uses: actions/upload-artifact@v4
         with:
           name: Lucky-APK-IPQ6000-ARM64
-          path: publish_apk
+          path: publish_apk/*
