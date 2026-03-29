@@ -13,7 +13,7 @@ env:
   CACHE_TOOLCHAIN: true
   UPLOAD_BIN_DIR: false
   FIRMWARE_RELEASE: true
-  FIRMWARE_TAG: ZN_M2-6.12-Pure
+  FIRMWARE_TAG: ZN_M2-6.12-Pure-${{ github.run_id }}  # 使用运行 ID 确保唯一
   TZ: Asia/Shanghai
 
 jobs:
