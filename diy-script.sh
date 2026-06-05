@@ -124,3 +124,11 @@ find package/luci-theme-*/* -type f -name '*luci-theme-*' -print -exec sed -i '/
 
 ./scripts/feeds update -a
 ./scripts/feeds install -a
+
+# =========================================================
+# 2. 【所有文本修改操作统一放在这里执行，防止被 feeds 覆盖】
+# =========================================================
+
+# 修改默认IP（双保险：改源码脚本 + 改默认设置）
+sed -i 's/192.168.1.1/192.168.2.1/g' package/base-files/files/bin/config_generate
+sed -i '$i uci set network.lan.ipaddr="192.168.2.1"' package/lean/default-settings/files/zzz-default-settings
